@@ -16,25 +16,41 @@
 
 ## 2. 核心挑战
 
-- **样本极短**：需要从极少量参考音频中提取稳定音色/说话人特征  
-- **对抗强度高**：评测侧具备较强的深度学习防御能力，常规生成策略鲁棒性不足  
-- **音频质量约束**：需要处理环境噪音、失真与带宽差异，并提升可懂度/自然度
+- **样本极短**：参考音频时长不足，音色建模难度高  
+- **对抗强度高**：防御系统使用深度学习强化，常规 TTS 易被识别  
+- **音频质量要求高**：需显著抑制噪声、补偿信息缺失，并保持语音可懂度和自然度
 
 ---
 
-## 3. 方法概述（高层）
+## 3. 方法概览
 
-本项目整体采用“**参考语音处理 → 条件生成 → 后处理增强 → 自动化批处理**”的工程化流水线，强调可复用、可迭代与稳定性。
+本仓库包含两条主线：
 
-> 为避免被滥用，本文档仅给出**研究/竞赛层面的高层说明**，不提供面向任何未授权系统的操作性细节。
+### 1) GPT-SoVITS 自动化生成流水线（主方案）
+对应脚本：`Audio_generate.py`、`Audio_generate2.py`
 
-### 3.1 流程示意（Mermaid）
+核心流程：
+1. 读取 `Task/*.csv`（字段：`utt, reference_speech, text`）
+2. 参考音频预处理：优先调用官方降噪（`tools/cmd-denoise.py`），不可用时回退简易降噪
+3. 时长补偿：
+   - 短音频（<3s）循环补齐到 3~10s
+   - 中等音频（3~10s）直接使用
+   - 长音频（>10s）截取前段作为 prompt
+4. 执行 ref-free 推理（CLI 方式调用 `GPT_SoVITS.inference_cli`）
+5. 结果输出到 `result/` 并自动生成 `result.csv`
 
-```mermaid
-flowchart LR
-    A[Reference Audio (short)] --> B[Preprocess\n denoise / normalize / trim]
-    B --> C[Speaker Representation\n (embedding / features)]
-    C --> D[Conditional Generation\n (text/audio conditioned)]
-    D --> E[Post-processing\n enhancement / filtering / loudness]
-    E --> F[Batch Export\n wav + manifest]
-    F --> G[Submission Packaging]
+`Audio_generate2.py` 额外支持：
+- 对长语音样本触发“小微调（few-shot finetune）”流程（尽量复用 WebUI 训练路径）
+- 若微调失败自动回退零样本推理，保障批处理不中断
+
+---
+
+### 2) Waveform-Mixer DNN（探索方案）
+对应脚本：`Audiogenerate_DNN.py`、`Audiogenerate_DNN_B.py`
+
+特点：
+- 将参考音频和初始合成音频切为 0.1s 波形片段（两种偏移模式）
+- 不使用离散 token，直接在**原始波形切片**上进行“注意力 + 线性层”自回归建模
+- 用验证音频波形作为监督目标，做端到端 MSE 训练
+
+该方案更偏研究探索，适合做结构创新和消融实验。
